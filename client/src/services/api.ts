@@ -29,10 +29,12 @@ api.interceptors.response.use(
 
 // ─── Auth ───────────────────────────────────────────────────────────────────
 export const authAPI = {
-  register: (data: { name: string; email: string; password: string; phone?: string }) =>
+  register: (data: any) =>
     api.post('/auth/register', data),
-  login: (data: { email: string; password: string }) =>
+  login: (data: any) =>
     api.post('/auth/login', data),
+  googleLogin: (data: { credential?: string; mockProfile?: any }) =>
+    api.post('/auth/google', data),
   getMe: () => api.get('/auth/me'),
   updateProfile: (data: { name?: string; phone?: string; avatar?: string }) =>
     api.put('/auth/profile', data),
@@ -53,6 +55,9 @@ export const slotsAPI = {
   getAll: (params?: any) => api.get('/slots/all', { params }),
   create: (data: any) => api.post('/slots', data),
   generate: (data: any) => api.post('/slots/generate', data),
+  update: (id: string, data: any) => api.put(`/slots/${id}`, data),
+  bulkUpdate: (data: { ids: string[]; updates: any }) => api.put('/slots/bulk', data),
+  bulkDelete: (data: { ids: string[] }) => api.post('/slots/bulk-delete', data),
   block: (id: string, data: { isBlocked: boolean; blockReason?: string }) =>
     api.put(`/slots/${id}/block`, data),
   delete: (id: string) => api.delete(`/slots/${id}`),

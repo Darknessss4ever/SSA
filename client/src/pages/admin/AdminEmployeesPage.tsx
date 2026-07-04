@@ -2,24 +2,13 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
   Users, Briefcase, Plus, Search, Edit2, Trash2, Mail, Phone, Calendar, 
-  CheckCircle, XCircle, AlertCircle, X 
+  CheckCircle, XCircle, AlertCircle, X, Download, Trash, PlusCircle, Clock
 } from 'lucide-react';
 import { employeesAPI } from '../../services/api';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { toast } from 'react-hot-toast';
-import { formatDate } from '../../lib/utils';
-
-interface Employee {
-  _id: string;
-  name: string;
-  email: string;
-  phone: string;
-  role: 'Coach' | 'Staff' | 'Manager' | 'Other';
-  salary: number;
-  joiningDate: string;
-  status: 'Active' | 'Inactive';
-  notes?: string;
-}
+import { formatDate, formatTime, downloadCSV } from '../../lib/utils';
+import type { Employee, Shift } from '../../types';
 
 export const AdminEmployeesPage: React.FC = () => {
   const queryClient = useQueryClient();
@@ -36,18 +25,22 @@ export const AdminEmployeesPage: React.FC = () => {
     name: string;
     email: string;
     phone: string;
-    role: 'Coach' | 'Staff' | 'Manager' | 'Other';
+    roleSelection: string;
+    customRoleName: string;
     salary: number;
     status: 'Active' | 'Inactive';
     notes: string;
+    shifts: Shift[];
   }>({
     name: '',
     email: '',
     phone: '',
-    role: 'Staff',
+    roleSelection: 'Staff',
+    customRoleName: '',
     salary: 0,
     status: 'Active',
-    notes: ''
+    notes: '',
+    shifts: []
   });
 
   const { data, isLoading } = useQuery({
@@ -57,9 +50,16 @@ export const AdminEmployeesPage: React.FC = () => {
 
   const employees: Employee[] = data?.data?.data || [];
 
+  // Standard roles and compile custom roles dynamically
+  const standardRoles = ['Coach', 'Staff', 'Manager'];
+  const customRoles = Array.from(
+    new Set(employees.map(e => e.role).filter(r => !standardRoles.includes(r)))
+  );
+  const allAvailableRoles = [...standardRoles, ...customRoles];
+
   // Create Employee Mutation
   const createMutation = useMutation({
-    mutationFn: (newEmp: typeof formData) => employeesAPI.create(newEmp),
+    mutationFn: (newEmp: any) => employeesAPI.create(newEmp),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-employees'] });
       toast.success('Employee added successfully 👔');
@@ -103,41 +103,61 @@ export const AdminEmployeesPage: React.FC = () => {
       name: '',
       email: '',
       phone: '',
-      role: 'Staff',
+      roleSelection: 'Staff',
+      customRoleName: '',
       salary: 0,
       status: 'Active',
-      notes: ''
+      notes: '',
+      shifts: []
     });
+  };
+
+  const getPayload = () => {
+    return {
+      name: formData.name,
+      email: formData.email,
+      phone: formData.phone,
+      role: formData.roleSelection === 'Other' ? formData.customRoleName : formData.roleSelection,
+      salary: formData.salary,
+      status: formData.status,
+      notes: formData.notes,
+      shifts: formData.shifts.filter(s => s.startTime && s.endTime)
+    };
   };
 
   const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.email || !formData.phone || formData.salary <= 0) {
+    const payload = getPayload();
+    if (!payload.name || !payload.email || !payload.phone || !payload.role || payload.salary <= 0) {
       toast.error('Please fill in all required fields');
       return;
     }
-    createMutation.mutate(formData);
+    createMutation.mutate(payload);
   };
 
   const handleEditSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedEmployee) return;
+    const payload = getPayload();
     updateMutation.mutate({
       id: selectedEmployee._id,
-      data: formData
+      data: payload
     });
   };
 
   const handleOpenEdit = (emp: Employee) => {
     setSelectedEmployee(emp);
+    const isCustom = !standardRoles.includes(emp.role);
     setFormData({
       name: emp.name,
       email: emp.email,
       phone: emp.phone,
-      role: emp.role,
+      roleSelection: isCustom ? 'Other' : emp.role,
+      customRoleName: isCustom ? emp.role : '',
       salary: emp.salary,
       status: emp.status,
-      notes: emp.notes || ''
+      notes: emp.notes || '',
+      shifts: emp.shifts || []
     });
     setIsEditModalOpen(true);
   };
@@ -146,6 +166,48 @@ export const AdminEmployeesPage: React.FC = () => {
     if (window.confirm(`Are you sure you want to remove ${name} from employees?`)) {
       deleteMutation.mutate(id);
     }
+  };
+
+  const handleAddShift = () => {
+    setFormData(prev => ({
+      ...prev,
+      shifts: [...prev.shifts, { startTime: '09:00', endTime: '17:00', name: '' }]
+    }));
+  };
+
+  const handleRemoveShift = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      shifts: prev.shifts.filter((_, idx) => idx !== index)
+    }));
+  };
+
+  const handleShiftChange = (index: number, field: keyof Shift, value: string) => {
+    setFormData(prev => {
+      const newShifts = [...prev.shifts];
+      newShifts[index] = { ...newShifts[index], [field]: value };
+      return { ...prev, shifts: newShifts };
+    });
+  };
+
+  const handleExportCSV = () => {
+    if (employees.length === 0) {
+      toast.error('No employees to export');
+      return;
+    }
+    const headers = [
+      { key: 'name', label: 'Name' },
+      { key: 'email', label: 'Email' },
+      { key: 'phone', label: 'Phone' },
+      { key: 'role', label: 'Role' },
+      { key: 'salary', label: 'Salary (INR)' },
+      { key: 'joiningDate', label: 'Joined Date' },
+      { key: 'status', label: 'Status' },
+      { key: 'shifts', label: 'Shifts Schedule' },
+      { key: 'notes', label: 'Notes' }
+    ];
+    downloadCSV(filteredEmployees, headers, 'employees_roster.csv');
+    toast.success('Employee roster exported! 📥');
   };
 
   // Filtered employees
@@ -179,14 +241,21 @@ export const AdminEmployeesPage: React.FC = () => {
             <Briefcase className="w-7 h-7 text-primary-400" />
             Employee Management
           </h1>
-          <p className="section-subtitle">Manage system staff, roles, contacts, and payroll.</p>
+          <p className="section-subtitle">Manage system staff, roles, shifts, contacts, and payroll.</p>
         </div>
-        <button
-          onClick={() => { resetForm(); setIsAddModalOpen(true); }}
-          className="btn btn-primary flex items-center justify-center gap-2"
-        >
-          <Plus className="w-5 h-5" /> Add Employee
-        </button>
+        <div className="flex gap-2">
+          {employees.length > 0 && (
+            <button onClick={handleExportCSV} className="btn btn-secondary flex items-center gap-2">
+              <Download className="w-4 h-4" /> Export CSV
+            </button>
+          )}
+          <button
+            onClick={() => { resetForm(); setIsAddModalOpen(true); }}
+            className="btn btn-primary flex items-center justify-center gap-2"
+          >
+            <Plus className="w-5 h-5" /> Add Employee
+          </button>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -235,10 +304,9 @@ export const AdminEmployeesPage: React.FC = () => {
               className="bg-dark-950 border border-dark-700/50 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-primary-500/50"
             >
               <option value="All">All Roles</option>
-              <option value="Coach">Coach</option>
-              <option value="Manager">Manager</option>
-              <option value="Staff">Staff</option>
-              <option value="Other">Other</option>
+              {allAvailableRoles.map(r => (
+                <option key={r} value={r}>{r}</option>
+              ))}
             </select>
           </div>
         </div>
@@ -256,6 +324,7 @@ export const AdminEmployeesPage: React.FC = () => {
                 <tr className="border-b border-dark-700/50">
                   <th className="table-head">Name</th>
                   <th className="table-head">Role</th>
+                  <th className="table-head">Shifts</th>
                   <th className="table-head">Salary</th>
                   <th className="table-head">Joined On</th>
                   <th className="table-head">Status</th>
@@ -278,6 +347,25 @@ export const AdminEmployeesPage: React.FC = () => {
                       <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-dark-850 text-dark-300">
                         {emp.role}
                       </span>
+                    </td>
+                    <td className="table-cell">
+                      {emp.shifts && emp.shifts.length > 0 ? (
+                        <div className="flex flex-col gap-1">
+                          {emp.shifts.map((shift, idx) => {
+                            const isCrossover = shift.endTime < shift.startTime;
+                            return (
+                              <span key={idx} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-dark-900 text-dark-300 border border-dark-800 w-fit">
+                                <Clock className="w-3 h-3 text-primary-400" />
+                                {shift.name && <span className="text-primary-400 font-bold mr-1">{shift.name}:</span>}
+                                <span>{formatTime(shift.startTime)} – {formatTime(shift.endTime)}</span>
+                                {isCrossover && <span className="text-[10px] text-amber-400 ml-1 font-bold">(+1 day)</span>}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <span className="text-dark-500 text-xs italic">No shifts assigned</span>
+                      )}
                     </td>
                     <td className="table-cell">
                       <span className="text-white font-medium">₹{emp.salary.toLocaleString('en-IN')}</span>
@@ -324,15 +412,15 @@ export const AdminEmployeesPage: React.FC = () => {
 
       {/* Modal - Add Employee */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
-          <div className="bg-dark-900 border border-dark-700/50 w-full max-w-md rounded-2xl overflow-hidden shadow-glow">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="bg-dark-900 border border-dark-700/50 w-full max-w-lg rounded-2xl overflow-hidden shadow-glow my-8">
             <div className="px-6 py-4 border-b border-dark-700/50 flex items-center justify-between">
               <h3 className="text-lg font-display font-bold text-white">Add New Employee</h3>
               <button onClick={() => setIsAddModalOpen(false)} className="text-dark-400 hover:text-white">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={handleAddSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleAddSubmit} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
               <div>
                 <label className="block text-xs text-dark-400 font-semibold mb-1">Full Name *</label>
                 <input
@@ -374,14 +462,13 @@ export const AdminEmployeesPage: React.FC = () => {
                 <div>
                   <label className="block text-xs text-dark-400 font-semibold mb-1">Staff Role *</label>
                   <select
-                    value={formData.role}
-                    onChange={e => setFormData({ ...formData, role: e.target.value as any })}
+                    value={formData.roleSelection}
+                    onChange={e => setFormData({ ...formData, roleSelection: e.target.value })}
                     className="w-full bg-dark-950 border border-dark-700/50 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-primary-500/50 text-sm"
                   >
-                    <option value="Coach">Coach</option>
-                    <option value="Manager">Manager</option>
-                    <option value="Staff">Staff</option>
-                    <option value="Other">Other</option>
+                    {standardRoles.map(r => <option key={r} value={r}>{r}</option>)}
+                    {customRoles.map(r => <option key={r} value={r}>{r}</option>)}
+                    <option value="Other">Other (Specify...)</option>
                   </select>
                 </div>
                 <div>
@@ -396,6 +483,85 @@ export const AdminEmployeesPage: React.FC = () => {
                     className="w-full bg-dark-950 border border-dark-700/50 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-primary-500/50 text-sm"
                   />
                 </div>
+              </div>
+
+              {formData.roleSelection === 'Other' && (
+                <div className="animate-slide-up">
+                  <label className="block text-xs text-dark-400 font-semibold mb-1">Specify Role Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.customRoleName}
+                    onChange={e => setFormData({ ...formData, customRoleName: e.target.value })}
+                    placeholder="e.g. Physiotherapist"
+                    className="w-full bg-dark-950 border border-dark-700/50 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-primary-500/50 text-sm"
+                  />
+                </div>
+              )}
+
+              {/* Shifts Section */}
+              <div className="border-t border-dark-800 pt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="block text-xs text-dark-400 font-semibold">Shifts Schedule</span>
+                  <button 
+                    type="button" 
+                    onClick={handleAddShift}
+                    className="text-xs text-primary-400 hover:text-primary-300 font-bold flex items-center gap-1"
+                  >
+                    <PlusCircle className="w-4 h-4" /> Add Shift
+                  </button>
+                </div>
+
+                {formData.shifts.length === 0 ? (
+                  <p className="text-xs text-dark-500 italic">No shifts assigned. Employee will work standard hours.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {formData.shifts.map((shift, idx) => (
+                      <div key={idx} className="flex gap-2 items-center bg-dark-950 p-3 rounded-xl border border-dark-800 animate-slide-up">
+                        <div className="flex-1 space-y-2">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[10px] text-dark-500">Start Time</label>
+                              <input
+                                type="time"
+                                required
+                                value={shift.startTime}
+                                onChange={e => handleShiftChange(idx, 'startTime', e.target.value)}
+                                className="w-full bg-dark-900 border border-dark-700/30 rounded-lg px-2.5 py-1 text-white text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-dark-500">End Time</label>
+                              <input
+                                type="time"
+                                required
+                                value={shift.endTime}
+                                onChange={e => handleShiftChange(idx, 'endTime', e.target.value)}
+                                className="w-full bg-dark-900 border border-dark-700/30 rounded-lg px-2.5 py-1 text-white text-xs"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <input
+                              type="text"
+                              value={shift.name}
+                              onChange={e => handleShiftChange(idx, 'name', e.target.value)}
+                              placeholder="Shift Name (e.g. Morning, Split Shift)"
+                              className="w-full bg-dark-900 border border-dark-700/30 rounded-lg px-2.5 py-1 text-white text-xs"
+                            />
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveShift(idx)}
+                          className="p-2 rounded-lg text-dark-500 hover:text-red-400 hover:bg-red-500/10 transition-all self-center"
+                        >
+                          <Trash className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -432,15 +598,15 @@ export const AdminEmployeesPage: React.FC = () => {
 
       {/* Modal - Edit Employee */}
       {isEditModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
-          <div className="bg-dark-900 border border-dark-700/50 w-full max-w-md rounded-2xl overflow-hidden shadow-glow">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="bg-dark-900 border border-dark-700/50 w-full max-w-lg rounded-2xl overflow-hidden shadow-glow my-8">
             <div className="px-6 py-4 border-b border-dark-700/50 flex items-center justify-between">
               <h3 className="text-lg font-display font-bold text-white">Edit Employee Details</h3>
               <button onClick={() => setIsEditModalOpen(false)} className="text-dark-400 hover:text-white">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={handleEditSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleEditSubmit} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
               <div>
                 <label className="block text-xs text-dark-400 font-semibold mb-1">Full Name *</label>
                 <input
@@ -479,14 +645,13 @@ export const AdminEmployeesPage: React.FC = () => {
                 <div>
                   <label className="block text-xs text-dark-400 font-semibold mb-1">Staff Role *</label>
                   <select
-                    value={formData.role}
-                    onChange={e => setFormData({ ...formData, role: e.target.value as any })}
+                    value={formData.roleSelection}
+                    onChange={e => setFormData({ ...formData, roleSelection: e.target.value })}
                     className="w-full bg-dark-950 border border-dark-700/50 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-primary-500/50 text-sm"
                   >
-                    <option value="Coach">Coach</option>
-                    <option value="Manager">Manager</option>
-                    <option value="Staff">Staff</option>
-                    <option value="Other">Other</option>
+                    {standardRoles.map(r => <option key={r} value={r}>{r}</option>)}
+                    {customRoles.map(r => <option key={r} value={r}>{r}</option>)}
+                    <option value="Other">Other (Specify...)</option>
                   </select>
                 </div>
                 <div>
@@ -502,6 +667,20 @@ export const AdminEmployeesPage: React.FC = () => {
                 </div>
               </div>
 
+              {formData.roleSelection === 'Other' && (
+                <div className="animate-slide-up">
+                  <label className="block text-xs text-dark-400 font-semibold mb-1">Specify Role Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.customRoleName}
+                    onChange={e => setFormData({ ...formData, customRoleName: e.target.value })}
+                    placeholder="e.g. Physiotherapist"
+                    className="w-full bg-dark-950 border border-dark-700/50 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-primary-500/50 text-sm"
+                  />
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs text-dark-400 font-semibold mb-1">Employment Status *</label>
@@ -514,6 +693,71 @@ export const AdminEmployeesPage: React.FC = () => {
                     <option value="Inactive">Inactive</option>
                   </select>
                 </div>
+              </div>
+
+              {/* Shifts Section */}
+              <div className="border-t border-dark-800 pt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="block text-xs text-dark-400 font-semibold">Shifts Schedule</span>
+                  <button 
+                    type="button" 
+                    onClick={handleAddShift}
+                    className="text-xs text-primary-400 hover:text-primary-300 font-bold flex items-center gap-1"
+                  >
+                    <PlusCircle className="w-4 h-4" /> Add Shift
+                  </button>
+                </div>
+
+                {formData.shifts.length === 0 ? (
+                  <p className="text-xs text-dark-500 italic">No shifts assigned. Employee will work standard hours.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {formData.shifts.map((shift, idx) => (
+                      <div key={idx} className="flex gap-2 items-center bg-dark-950 p-3 rounded-xl border border-dark-800 animate-slide-up">
+                        <div className="flex-1 space-y-2">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[10px] text-dark-500">Start Time</label>
+                              <input
+                                type="time"
+                                required
+                                value={shift.startTime}
+                                onChange={e => handleShiftChange(idx, 'startTime', e.target.value)}
+                                className="w-full bg-dark-900 border border-dark-700/30 rounded-lg px-2.5 py-1 text-white text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-dark-500">End Time</label>
+                              <input
+                                type="time"
+                                required
+                                value={shift.endTime}
+                                onChange={e => handleShiftChange(idx, 'endTime', e.target.value)}
+                                className="w-full bg-dark-900 border border-dark-700/30 rounded-lg px-2.5 py-1 text-white text-xs"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <input
+                              type="text"
+                              value={shift.name}
+                              onChange={e => handleShiftChange(idx, 'name', e.target.value)}
+                              placeholder="Shift Name (e.g. Morning, Split Shift)"
+                              className="w-full bg-dark-900 border border-dark-700/30 rounded-lg px-2.5 py-1 text-white text-xs"
+                            />
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveShift(idx)}
+                          className="p-2 rounded-lg text-dark-500 hover:text-red-400 hover:bg-red-500/10 transition-all self-center"
+                        >
+                          <Trash className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div>

@@ -61,3 +61,44 @@ export function generateDateRange(days = 14) {
   }
   return dates;
 }
+
+export function downloadCSV(data: any[], headers: { key: string; label: string }[], filename: string) {
+  const csvRows = [];
+  // add headers
+  csvRows.push(headers.map(h => `"${String(h.label).replace(/"/g, '""')}"`).join(','));
+  
+  // add data rows
+  for (const row of data) {
+    const values = headers.map(h => {
+      const parts = h.key.split('.');
+      let val: any = row;
+      for (const part of parts) {
+        if (val === null || val === undefined) break;
+        val = val[part];
+      }
+      if (val === null || val === undefined) {
+        return '""';
+      }
+      if (Array.isArray(val)) {
+        val = val.map(v => {
+          if (typeof v === 'object' && v !== null) {
+            return `${v.name ? v.name + ': ' : ''}${v.startTime || ''}-${v.endTime || ''}`;
+          }
+          return String(v);
+        }).join('; ');
+      }
+      return `"${String(val).replace(/"/g, '""')}"`;
+    });
+    csvRows.push(values.join(','));
+  }
+  
+  const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}

@@ -2,12 +2,13 @@ import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { 
   BarChart3, DollarSign, Clock, Users, Calendar, Mail, Phone,
-  AlertTriangle, AlertCircle, FileText, CheckCircle2 
+  AlertTriangle, AlertCircle, FileText, CheckCircle2, Download
 } from 'lucide-react';
 import { reportsAPI, financialsAPI } from '../../services/api';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
-import { formatDate } from '../../lib/utils';
+import { formatDate, downloadCSV } from '../../lib/utils';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
+import toast from 'react-hot-toast';
 
 interface DueRecord {
   _id: string;
@@ -41,7 +42,11 @@ interface ExpiringMembership {
 export const AdminReportsPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'sales' | 'dues' | 'expirations'>('sales');
   const [reportType, setReportType] = useState<'income' | 'expense'>('income');
-  const [timeRange, setTimeRange] = useState<'month' | 'ytd' | 'year' | 'all'>('month');
+  const [timeRange, setTimeRange] = useState<'month' | 'last3m' | 'last6m' | 'ytd' | 'year' | 'custom' | 'all'>('month');
+  
+  // Custom range dates
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
 
   // Queries
   const { data: transactionsRes, isLoading: isTxLoading } = useQuery({
@@ -102,6 +107,24 @@ export const AdminReportsPage: React.FC = () => {
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
       return txDate >= startOfMonth;
     }
+    if (timeRange === 'last3m') {
+      const threeMonthsAgo = new Date();
+      threeMonthsAgo.setMonth(now.getMonth() - 3);
+      return txDate >= threeMonthsAgo;
+    }
+    if (timeRange === 'last6m') {
+      const sixMonthsAgo = new Date();
+      sixMonthsAgo.setMonth(now.getMonth() - 6);
+      return txDate >= sixMonthsAgo;
+    }
+    if (timeRange === 'custom') {
+      if (!customStartDate || !customEndDate) return true;
+      const start = new Date(customStartDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(customEndDate);
+      end.setHours(23, 59, 59, 999);
+      return txDate >= start && txDate <= end;
+    }
     if (timeRange === 'ytd') {
       const startOfYear = new Date(now.getFullYear(), 0, 1);
       return txDate >= startOfYear && txDate <= now;
@@ -142,6 +165,82 @@ export const AdminReportsPage: React.FC = () => {
     (activeTab === 'dues' && isDuesLoading) || 
     (activeTab === 'expirations' && isMembershipsLoading);
 
+  // CSV Exporters
+  const handleExportSalesCSV = () => {
+    if (salesTransactions.length === 0) {
+      toast.error('No transactions to export');
+      return;
+    }
+    const headers = [
+      { key: 'category', label: 'Category' },
+      { key: 'subcategory', label: 'Subcategory' },
+      { key: 'date', label: 'Date' },
+      { key: 'customerDetails.name', label: 'Customer Name' },
+      { key: 'description', label: 'Description' },
+      { key: 'amount', label: 'Amount (INR)' },
+      { key: 'paymentMethod', label: 'Payment Method' }
+    ];
+    const rangeName = timeRange === 'custom' ? `custom_${customStartDate}_to_${customEndDate}` : timeRange;
+    downloadCSV(salesTransactions, headers, `${reportType}_report_${rangeName}.csv`);
+    toast.success('Transactions report exported! 📥');
+  };
+
+  const handleExportDuesCSV = () => {
+    if (duesRecords.length === 0) {
+      toast.error('No outstanding dues to export');
+      return;
+    }
+    const headers = [
+      { key: 'customerDetails.name', label: 'Customer Name' },
+      { key: 'customerDetails.email', label: 'Email' },
+      { key: 'customerDetails.phone', label: 'Phone' },
+      { key: 'category', label: 'Category' },
+      { key: 'dueDate', label: 'Due Date' },
+      { key: 'description', label: 'Description' },
+      { key: 'amount', label: 'Amount (INR)' }
+    ];
+    downloadCSV(duesRecords, headers, 'outstanding_payment_dues.csv');
+    toast.success('Payment dues report exported! 📥');
+  };
+
+  const handleExportExpiringCSV = () => {
+    if (expiringMemberships.length === 0) {
+      toast.error('No expiring memberships to export');
+      return;
+    }
+    const headers = [
+      { key: 'user.name', label: 'Member Name' },
+      { key: 'user.email', label: 'Email' },
+      { key: 'user.phone', label: 'Phone' },
+      { key: 'planName', label: 'Plan Name' },
+      { key: 'durationLabel', label: 'Duration' },
+      { key: 'validTo', label: 'Expiry Date' },
+      { key: 'daysRemaining', label: 'Days Remaining' },
+      { key: 'price', label: 'Price (INR)' }
+    ];
+    downloadCSV(expiringMemberships, headers, 'expiring_memberships_report.csv');
+    toast.success('Expiring memberships list exported! 📥');
+  };
+
+  const handleExportAllActiveCSV = () => {
+    if (allActiveMemberships.length === 0) {
+      toast.error('No active memberships to export');
+      return;
+    }
+    const headers = [
+      { key: 'user.name', label: 'Member Name' },
+      { key: 'user.email', label: 'Email' },
+      { key: 'user.phone', label: 'Phone' },
+      { key: 'planName', label: 'Plan Name' },
+      { key: 'durationLabel', label: 'Duration' },
+      { key: 'validFrom', label: 'Start Date' },
+      { key: 'validTo', label: 'End Date' },
+      { key: 'price', label: 'Price (INR)' }
+    ];
+    downloadCSV(allActiveMemberships, headers, 'active_memberships_ledger.csv');
+    toast.success('Active memberships ledger exported! 📥');
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -153,7 +252,7 @@ export const AdminReportsPage: React.FC = () => {
         <p className="section-subtitle">View sales analytics, payment dues, and membership expirations.</p>
       </div>
 
-      {/* Tabs list */}
+      {/* Tabs List */}
       <div className="flex border-b border-dark-700/50 bg-dark-900/50 rounded-xl overflow-hidden p-1 gap-1">
         <button
           onClick={() => setActiveTab('sales')}
@@ -197,55 +296,84 @@ export const AdminReportsPage: React.FC = () => {
           {activeTab === 'sales' && (
             <div className="space-y-6">
               {/* Filter controls */}
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-dark-900/60 p-4 rounded-xl border border-dark-700/50">
-                {/* Report Type Toggle */}
-                <div className="flex gap-1.5 bg-dark-950 p-1 rounded-lg border border-dark-800">
-                  <button
-                    onClick={() => setReportType('income')}
-                    className={`px-4 py-2 text-xs font-semibold rounded-md transition-all ${
-                      reportType === 'income'
-                        ? 'bg-emerald-500 text-white shadow-md'
-                        : 'text-dark-400 hover:text-white'
-                    }`}
-                  >
-                    Sales (Income)
-                  </button>
-                  <button
-                    onClick={() => setReportType('expense')}
-                    className={`px-4 py-2 text-xs font-semibold rounded-md transition-all ${
-                      reportType === 'expense'
-                        ? 'bg-red-500 text-white shadow-md'
-                        : 'text-dark-400 hover:text-white'
-                    }`}
-                  >
-                    Purchases (Expenses)
-                  </button>
+              <div className="flex flex-col gap-4 bg-dark-900/60 p-4 rounded-xl border border-dark-700/50">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  {/* Report Type Toggle */}
+                  <div className="flex gap-1.5 bg-dark-950 p-1 rounded-lg border border-dark-800">
+                    <button
+                      onClick={() => setReportType('income')}
+                      className={`px-4 py-2 text-xs font-semibold rounded-md transition-all ${
+                        reportType === 'income'
+                          ? 'bg-emerald-500 text-white shadow-md'
+                          : 'text-dark-400 hover:text-white'
+                      }`}
+                    >
+                      Sales (Income)
+                    </button>
+                    <button
+                      onClick={() => setReportType('expense')}
+                      className={`px-4 py-2 text-xs font-semibold rounded-md transition-all ${
+                        reportType === 'expense'
+                          ? 'bg-red-500 text-white shadow-md'
+                          : 'text-dark-400 hover:text-white'
+                      }`}
+                    >
+                      Purchases (Expenses)
+                    </button>
+                  </div>
+
+                  {/* Time Range Pills */}
+                  <div className="flex gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
+                    {(['month', 'last3m', 'last6m', 'ytd', 'year', 'custom', 'all'] as const).map((range) => {
+                      const label = {
+                        month: 'This Month',
+                        last3m: 'Last 3 Months',
+                        last6m: 'Last 6 Months',
+                        ytd: 'YTD',
+                        year: 'This Year',
+                        custom: 'Custom Range',
+                        all: 'All Time'
+                      }[range];
+                      return (
+                        <button
+                          key={range}
+                          onClick={() => setTimeRange(range)}
+                          className={`px-3.5 py-2 text-xs font-semibold rounded-lg border transition-all whitespace-nowrap ${
+                            timeRange === range
+                              ? 'bg-primary-500/15 border-primary-500/35 text-primary-400 font-bold'
+                              : 'bg-dark-950 border-dark-700/50 text-dark-400 hover:text-white'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                {/* Time Range Pills */}
-                <div className="flex gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-                  {(['month', 'ytd', 'year', 'all'] as const).map((range) => {
-                    const label = {
-                      month: 'This Month',
-                      ytd: 'Year to Date (YTD)',
-                      year: 'This Year',
-                      all: 'All Time'
-                    }[range];
-                    return (
-                      <button
-                        key={range}
-                        onClick={() => setTimeRange(range)}
-                        className={`px-3.5 py-2 text-xs font-semibold rounded-lg border transition-all whitespace-nowrap ${
-                          timeRange === range
-                            ? 'bg-primary-500/15 border-primary-500/35 text-primary-400 font-bold'
-                            : 'bg-dark-950 border-dark-700/50 text-dark-400 hover:text-white'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
+                {/* Custom Date Range Picker */}
+                {timeRange === 'custom' && (
+                  <div className="flex flex-wrap gap-4 items-center bg-dark-950 p-3 rounded-xl border border-dark-800/80 animate-slide-up w-fit">
+                    <div>
+                      <label className="block text-[10px] text-dark-500 font-bold uppercase mb-1">Start Date</label>
+                      <input
+                        type="date"
+                        value={customStartDate}
+                        onChange={e => setCustomStartDate(e.target.value)}
+                        className="bg-dark-900 border border-dark-700/40 rounded-lg px-3 py-1.5 text-white text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-dark-500 font-bold uppercase mb-1">End Date</label>
+                      <input
+                        type="date"
+                        value={customEndDate}
+                        onChange={e => setCustomEndDate(e.target.value)}
+                        className="bg-dark-900 border border-dark-700/40 rounded-lg px-3 py-1.5 text-white text-xs"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="grid lg:grid-cols-3 gap-6">
@@ -316,20 +444,30 @@ export const AdminReportsPage: React.FC = () => {
                 </div>
 
                 {/* Transactions Ledger */}
-                <div className="lg:col-span-2 card p-6">
-                  <h2 className="text-base font-display font-bold text-white mb-4 flex items-center gap-2">
-                    <FileText className="w-5 h-5 text-primary-400" />
-                    {reportType === 'income' ? 'Recent Sales Transactions' : 'Recent Purchase/Expense Transactions'}
-                  </h2>
+                <div className="lg:col-span-2 card p-6 flex flex-col justify-between">
+                  <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                    <h2 className="text-base font-display font-bold text-white flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-primary-400" />
+                      {reportType === 'income' ? 'Recent Sales Transactions' : 'Recent Purchase/Expense Transactions'}
+                    </h2>
+                    {salesTransactions.length > 0 && (
+                      <button 
+                        onClick={handleExportSalesCSV}
+                        className="px-3 py-1.5 rounded-lg bg-dark-950 border border-dark-850 hover:bg-dark-800 text-white text-xs font-semibold flex items-center gap-1.5 transition-all"
+                      >
+                        <Download className="w-3.5 h-3.5" /> Export CSV
+                      </button>
+                    )}
+                  </div>
 
                   {salesTransactions.length === 0 ? (
-                    <p className="text-dark-400 text-sm text-center py-10">
+                    <p className="text-dark-400 text-sm text-center py-20 flex-1">
                       No {reportType === 'income' ? 'sales' : 'purchase'} transactions available for this period.
                     </p>
                   ) : (
-                    <div className="overflow-y-auto max-h-[380px] pr-2 space-y-3">
+                    <div className="overflow-y-auto max-h-[380px] pr-2 space-y-3 flex-1">
                       {salesTransactions.map((tx: any) => (
-                        <div key={tx._id} className="flex items-center justify-between p-3 rounded-xl bg-dark-950 border border-dark-800 hover:border-dark-700 transition-all">
+                        <div key={tx._id} className="flex items-center justify-between p-3 rounded-xl bg-dark-950 border border-dark-800 hover:border-dark-700 transition-all animate-fade-in">
                           <div className="space-y-1">
                             <div className="flex items-center gap-2">
                               <span className={`px-2 py-0.5 rounded text-[10px] font-bold capitalize ${
@@ -376,9 +514,19 @@ export const AdminReportsPage: React.FC = () => {
                   <h2 className="text-lg font-display font-bold text-white">Outstanding Receivables</h2>
                   <p className="text-sm text-dark-400">List of clients with pending payments on court bookings, coaching, or subscriptions.</p>
                 </div>
-                <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl px-5 py-3 text-right">
-                  <p className="text-amber-400 font-black text-2xl">₹{totalDuesVolume.toLocaleString('en-IN')}</p>
-                  <p className="text-xs text-dark-400">Total Unpaid Balance</p>
+                <div className="flex items-center gap-4">
+                  {duesRecords.length > 0 && (
+                    <button 
+                      onClick={handleExportDuesCSV}
+                      className="px-4 py-2.5 rounded-xl bg-dark-950 border border-dark-800 hover:bg-dark-850 text-white text-xs font-semibold flex items-center gap-2 transition-all"
+                    >
+                      <Download className="w-4 h-4 text-dark-400" /> Export CSV
+                    </button>
+                  )}
+                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl px-5 py-3 text-right">
+                    <p className="text-amber-400 font-black text-2xl">₹{totalDuesVolume.toLocaleString('en-IN')}</p>
+                    <p className="text-xs text-dark-400">Total Unpaid Balance</p>
+                  </div>
                 </div>
               </div>
 
@@ -456,10 +604,20 @@ export const AdminReportsPage: React.FC = () => {
 
               {/* Expiring Soon Section */}
               <div className="card p-6">
-                <h2 className="text-base font-display font-bold text-white mb-4 flex items-center gap-2">
-                  <AlertCircle className="w-5 h-5 text-rose-400" />
-                  Expiring in Next 30 Days ({expiringMemberships.length})
-                </h2>
+                <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
+                  <h2 className="text-base font-display font-bold text-white flex items-center gap-2">
+                    <AlertCircle className="w-5 h-5 text-rose-400" />
+                    Expiring in Next 30 Days ({expiringMemberships.length})
+                  </h2>
+                  {expiringMemberships.length > 0 && (
+                    <button 
+                      onClick={handleExportExpiringCSV}
+                      className="px-3 py-1.5 rounded-lg bg-dark-950 border border-dark-850 hover:bg-dark-800 text-white text-xs font-semibold flex items-center gap-1.5 transition-all"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Export Expiring List
+                    </button>
+                  )}
+                </div>
 
                 {expiringMemberships.length === 0 ? (
                   <p className="text-dark-400 text-sm text-center py-8">No memberships expiring in the next 30 days. All active plans are healthy!</p>
@@ -514,9 +672,19 @@ export const AdminReportsPage: React.FC = () => {
 
               {/* All Active Memberships Ledger */}
               <div className="card p-6">
-                <h2 className="text-base font-display font-bold text-white mb-4">
-                  All Active Memberships Ledger ({allActiveMemberships.length})
-                </h2>
+                <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
+                  <h2 className="text-base font-display font-bold text-white">
+                    All Active Memberships Ledger ({allActiveMemberships.length})
+                  </h2>
+                  {allActiveMemberships.length > 0 && (
+                    <button 
+                      onClick={handleExportAllActiveCSV}
+                      className="px-3 py-1.5 rounded-lg bg-dark-950 border border-dark-850 hover:bg-dark-800 text-white text-xs font-semibold flex items-center gap-1.5 transition-all"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Export Active Ledger
+                    </button>
+                  )}
+                </div>
 
                 {allActiveMemberships.length === 0 ? (
                   <p className="text-dark-400 text-sm text-center py-6">No active memberships found in the system.</p>

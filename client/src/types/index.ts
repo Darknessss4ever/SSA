@@ -162,15 +162,22 @@ export interface AuthData {
   subscription?: Subscription | null;
 }
 
+export interface Shift {
+  startTime: string;
+  endTime: string;
+  name?: string;
+}
+
 export interface Employee {
   _id: string;
   name: string;
   email: string;
   phone: string;
-  role: 'Coach' | 'Staff' | 'Manager' | 'Other';
+  role: string;
   salary: number;
   joiningDate: string;
   status: 'Active' | 'Inactive';
   notes?: string;
+  shifts?: Shift[];
   createdAt: string;
 }

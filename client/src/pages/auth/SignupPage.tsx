@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -10,13 +10,24 @@ import { useAuthStore } from '../../stores/authStore';
 
 const schema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
-  email: z.string().email('Enter a valid email'),
-  phone: z.string().optional(),
+  email: z.string().optional().or(z.literal('')),
+  phone: z.string().optional().or(z.literal('')),
   password: z.string().min(6, 'Password must be at least 6 characters'),
   confirmPassword: z.string(),
+}).refine(data => data.email || data.phone, {
+  message: 'Either Email or Phone Number is required',
+  path: ['email'],
 }).refine(data => data.password === data.confirmPassword, {
   message: 'Passwords do not match',
   path: ['confirmPassword'],
+}).refine(data => {
+  if (data.email) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email);
+  }
+  return true;
+}, {
+  message: 'Enter a valid email address',
+  path: ['email'],
 });
 
 type FormData = z.infer<typeof schema>;
@@ -37,13 +48,71 @@ export const SignupPage: React.FC = () => {
     resolver: zodResolver(schema),
   });
 
+  // Load Google Identity Services SDK
+  useEffect(() => {
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    document.head.appendChild(script);
+
+    script.onload = () => {
+      if ((window as any).google) {
+        (window as any).google.accounts.id.initialize({
+          client_id: '984365319808-16v6h9epd2f2vj0f9b6e8g3j2o8m7n9b.apps.googleusercontent.com', // placeholder client ID
+          callback: handleGoogleResponse,
+        });
+        (window as any).google.accounts.id.renderButton(
+          document.getElementById('google-signup-btn'),
+          { theme: 'outline', size: 'large', width: 320 }
+        );
+      }
+    };
+
+    return () => {
+      try {
+        document.head.removeChild(script);
+      } catch (_) {}
+    };
+  }, []);
+
+  const handleGoogleResponse = async (response: any) => {
+    try {
+      const apiResponse = await authAPI.googleLogin({ credential: response.credential });
+      const { user, token } = apiResponse.data.data;
+      setAuth(user, token, null);
+      toast.success(`Welcome to ShreeHari Arena, ${user.name.split(' ')[0]}! 🎉`);
+      navigate('/dashboard');
+    } catch (err: any) {
+      toast.error(err?.message || 'Google registration failed');
+    }
+  };
+
+  const handleMockGoogleLogin = async () => {
+    try {
+      const mockProfile = {
+        email: 'google-user@test.com',
+        name: 'Google Test Athlete',
+        sub: 'google_oauth_mock_id_99999',
+        picture: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80'
+      };
+      const apiResponse = await authAPI.googleLogin({ mockProfile });
+      const { user, token } = apiResponse.data.data;
+      setAuth(user, token, null);
+      toast.success(`Simulated Google login as ${user.name.split(' ')[0]}! 🎉`);
+      navigate('/dashboard');
+    } catch (err: any) {
+      toast.error(err?.message || 'Simulated Google signup failed');
+    }
+  };
+
   const onSubmit = async (data: FormData) => {
     try {
       const response = await authAPI.register({
         name: data.name,
-        email: data.email,
+        email: data.email || undefined,
         password: data.password,
-        phone: data.phone,
+        phone: data.phone || undefined,
       });
       const { user, token } = response.data.data;
       setAuth(user, token, null);
@@ -100,13 +169,13 @@ export const SignupPage: React.FC = () => {
             </div>
 
             <div>
-              <label className="label">Email Address</label>
+              <label className="label">Email Address <span className="text-dark-500">(Optional if Phone is filled)</span></label>
               <input {...register('email')} type="email" placeholder="you@example.com" className="input" />
               {errors.email && <p className="text-red-400 text-xs mt-1">{errors.email.message}</p>}
             </div>
 
             <div>
-              <label className="label">Phone Number <span className="text-dark-500">(optional)</span></label>
+              <label className="label">Phone Number <span className="text-dark-500">(Optional if Email is filled)</span></label>
               <input {...register('phone')} type="tel" placeholder="+91 9876543210" className="input" />
             </div>
 
@@ -149,7 +218,28 @@ export const SignupPage: React.FC = () => {
             </button>
           </form>
 
-          <div className="mt-4 text-center">
+          {/* Social signup divider */}
+          <div className="relative my-6">
+            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-dark-800" /></div>
+            <div className="relative flex justify-center text-xs uppercase"><span className="bg-dark-950 px-2 text-dark-550 font-semibold">Or continue with</span></div>
+          </div>
+
+          {/* Google buttons */}
+          <div className="flex flex-col gap-3 items-center">
+            <div id="google-signup-btn" className="w-full flex justify-center"></div>
+            {import.meta.env.DEV && (
+              <button
+                type="button"
+                onClick={handleMockGoogleLogin}
+                className="w-full flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-xl bg-dark-900 hover:bg-dark-850 border border-dark-800 text-white font-medium text-sm transition-all"
+              >
+                <span className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-xs font-bold text-dark-950 shadow-sm font-sans">G</span>
+                Simulate Google Signup (Dev Mode)
+              </button>
+            )}
+          </div>
+
+          <div className="mt-6 text-center">
             <p className="text-dark-400 text-sm">
               Already have an account?{' '}
               <Link to="/login" className="text-primary-400 hover:text-primary-300 font-medium transition-colors">
