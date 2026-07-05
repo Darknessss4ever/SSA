@@ -31,9 +31,9 @@ const register = async (req, res) => {
 
     const user = await User.create({
       name,
-      email: email ? email.toLowerCase() : null,
+      email: email ? email.toLowerCase() : undefined,
       password,
-      phone: phone || null
+      phone: phone || undefined
     });
 
     const token = generateToken(user._id);
@@ -145,7 +145,7 @@ const googleLogin = async (req, res) => {
     if (!user) {
       user = await User.create({
         name,
-        email: email ? email.toLowerCase() : null,
+        email: email ? email.toLowerCase() : undefined,
         googleId,
         avatar: picture || '',
         isActive: true,
